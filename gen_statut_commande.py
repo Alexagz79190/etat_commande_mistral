@@ -1,7 +1,7 @@
 # app.py
 # -*- coding: utf-8 -*-
 """
-App Streamlit : génération de fichiers de simulation + envoi SFTP (secrets)
+App Streamlit : simulation export commande BOSS + envoi SFTP
 """
 
 import streamlit as st
@@ -13,7 +13,7 @@ import paramiko
 import os
 
 # =============================
-# Charger les secrets SFTP (Streamlit secrets ou variables d'environnement)
+# Charger les secrets SFTP
 # =============================
 def get_sftp_config():
     try:
@@ -34,7 +34,9 @@ def get_sftp_config():
 
 SFTP_CFG = get_sftp_config()
 
-# États
+# =============================
+# États possibles
+# =============================
 ETATS = [
     "Delete",
     "En attente de paiement",
@@ -46,7 +48,7 @@ ETATS = [
 ]
 
 # =============================
-# Fonction de génération
+# Fonction génération fichiers commande
 # =============================
 def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
     no_commande_base = 1873036
@@ -104,7 +106,7 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
     return fichiers
 
 # =============================
-# Fonction envoi SFTP
+# Fonction upload SFTP
 # =============================
 def upload_sftp(fichiers, sftp_cfg):
     host = sftp_cfg.get("host")
@@ -112,40 +114,88 @@ def upload_sftp(fichiers, sftp_cfg):
     pwd  = sftp_cfg.get("pass")
     dir_remote = sftp_cfg.get("dir", "refonteTest")
 
+    if not host or not user or not pwd:
+        return False, "Identifiants SFTP manquants"
+
     try:
         transport = paramiko.Transport((host, 22))
         transport.connect(username=user, password=pwd)
         sftp = paramiko.SFTPClient.from_transport(transport)
 
-        st.write("📋 Contenu racine:")
-        st.write(sftp.listdir())
-
+        # Upload direct (pas de chdir car cwd=None)
         for nom, buffer in fichiers:
             buffer.seek(0)
-            remote_path = f"{dir_remote}/{nom}"   # ✅ upload direct
+            remote_path = f"{dir_remote}/{nom}"
             sftp.putfo(buffer, remote_path)
             st.write(f"✅ Upload {remote_path}")
 
         sftp.close()
         transport.close()
-        return True, f"{len(fichiers)} fichier(s) envoyé(s) vers {dir_remote}"
+        return True, f"{len(fichiers)} fichier(s) envoyé(s) en SFTP vers {dir_remote}"
     except Exception as e:
         return False, str(e)
 
 # =============================
 # Interface Streamlit
 # =============================
-st.title("📦 Simulation états de livraison + Envoi SFTP (secrets)")
+st.title("📦 Simulation export commande BOSS + Envoi SFTP")
 
-st.markdown("⚠️ Les identifiants SFTP sont lus depuis `st.secrets['sftp']` ou depuis les variables d'environnement. Ne les mettez pas dans le code.")
+st.markdown("""
+Cette application permet de :
+1. Charger un **fichier source ERP** (CSV)  
+2. Générer un ou plusieurs fichiers **commande BOSS** au format attendu  
+3. Les envoyer automatiquement sur le serveur **SFTP** (`refonteTest`)
 
-fichier_source = st.file_uploader("Charger le fichier CSV source", type=["csv"])
-etats_selectionnes = st.multiselect("Choisir les états :", ETATS, default=[ETATS[0]])
-transporteur = st.text_input("Nom du transporteur", value="")
-nb_max = st.number_input("Nombre max de commandes (0 = toutes)", min_value=0, value=0, step=1)
-mixte = st.checkbox("Mélanger les états", value=False)
+---
 
-if st.button("Générer et envoyer sur SFTP"):
+### 📑 Fichier source attendu (ERP → application)
+| Champ source       | Description |
+|--------------------|-------------|
+| **Reference**      | Identifiant unique de transaction |
+| **Quantité**       | Quantité commandée (séparée par `|` si multi-lignes) |
+| **prixUnitHt**     | Prix de vente unitaire HT |
+| **prixAchatHt**    | Prix d’achat unitaire HT |
+| **Code Mistral**   | Code article Mistral |
+| **Libellé**        | Désignation de l’article |
+
+---
+
+### 📑 Fichier généré (application → BOSS)
+| Champ sortie       | Règle / Source |
+|--------------------|----------------|
+| **No Transaction** | Colonne `Reference` |
+| **No Ligne**       | N° de ligne incrémental |
+| **No Commande Client** | Numéro de base `1873036` (incrément si état = "En cours de livraison") |
+| **Etat**           | Choisi parmi la liste |
+| **No Tracking**    | Renseigné uniquement si **Etat = En cours de livraison** |
+| **No Transporteur**| Saisi par l’utilisateur |
+| **Code article**   | Colonne `Code Mistral` |
+| **Désignation**    | Colonne `Libellé` |
+| **Quantité**       | Colonne `Quantité` |
+| **PV net**         | Colonne `prixUnitHt` |
+| **PA net**         | Colonne `prixAchatHt` |
+""")
+
+# Upload fichier source
+fichier_source = st.file_uploader("📂 Charger le fichier CSV source", type=["csv"])
+
+# Prévisualisation du fichier source
+if fichier_source:
+    try:
+        df_preview = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
+        st.markdown("### 👀 Aperçu du fichier source (5 premières lignes)")
+        st.dataframe(df_preview.head())
+    except Exception as e:
+        st.error(f"Erreur lecture CSV: {e}")
+
+# Sélection options
+etats_selectionnes = st.multiselect("📌 Choisir les états de commande :", ETATS, default=[ETATS[0]])
+transporteur = st.text_input("🚚 Nom du transporteur", value="")
+nb_max = st.number_input("🔢 Nombre max de commandes (0 = toutes)", min_value=0, value=0, step=1)
+mixte = st.checkbox("🎲 Mélanger les états (aléatoire)", value=False)
+
+# Bouton
+if st.button("▶️ Générer et envoyer sur SFTP"):
     if not fichier_source:
         st.error("Merci de charger le fichier source.")
     elif not etats_selectionnes:
@@ -172,6 +222,6 @@ if st.button("Générer et envoyer sur SFTP"):
         ok, msg = upload_sftp(fichiers, SFTP_CFG)
         if ok:
             st.success(msg)
-            st.download_button("Télécharger le 1er fichier généré", fichiers[0][1], file_name=fichiers[0][0])
+            st.download_button("⬇️ Télécharger le 1er fichier généré", fichiers[0][1], file_name=fichiers[0][0])
         else:
             st.error("Erreur SFTP : " + msg)

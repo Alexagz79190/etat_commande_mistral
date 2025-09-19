@@ -120,15 +120,27 @@ def upload_sftp(fichiers, sftp_cfg):
         transport.connect(username=user, password=pwd)
         sftp = paramiko.SFTPClient.from_transport(transport)
 
-        try:
-            sftp.chdir(dir_remote)
-        except IOError:
-            return False, f"Le dossier distant '{dir_remote}' est introuvable"
+        # Debug : où on est au départ
+        cwd = sftp.getcwd()
+        st.write("📂 Répertoire courant après login:", cwd)
+        st.write("📋 Contenu:", sftp.listdir())
 
+        # Essayer d'aller dans dir_remote
+        try:
+            sftp.chdir(dir_remote)   # relatif
+        except IOError:
+            try:
+                sftp.chdir("/" + dir_remote)  # absolu
+                dir_remote = "/" + dir_remote
+            except Exception as e:
+                return False, f"Impossible d'accéder au dossier '{dir_remote}' : {e}"
+
+        # Upload fichiers
         for nom, buffer in fichiers:
             buffer.seek(0)
             remote_path = f"{dir_remote}/{nom}"
             sftp.putfo(buffer, remote_path)
+            st.write(f"✅ Upload {remote_path}")
 
         sftp.close()
         transport.close()

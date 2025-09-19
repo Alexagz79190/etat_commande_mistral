@@ -51,23 +51,28 @@ ETATS = [
 # Fonction génération fichiers commande
 # =============================
 def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
+    """
+    Génère un ou plusieurs fichiers OU_EXP_xxx.csv en mémoire à partir du fichier source.
+    - Filtre les lignes sans Code Mistral
+    - Divise les prix (PV net / PA net) par 100 car exprimés en centimes
+    """
     no_commande_base = 1873036
     num_commande = no_commande_base
-
     fichiers = []
 
-    # ⚡️ Supprimer lignes avec Code Mistral vide ou NaN
-    df = df[df["Code Mistral"].notna()]                  # enlève NaN
-    df = df[df["Code Mistral"].str.strip() != ""]        # enlève vides
+    # ⚡ Filtrage des lignes où Code Mistral est vide/NaN
+    if "Code Mistral" in df.columns:
+        df = df[df["Code Mistral"].notna()]
+        df = df[df["Code Mistral"].astype(str).str.strip() != ""]
 
     for idx, ligne in df.iterrows():
         if nb_max and idx >= nb_max:
             break
 
-        # État
+        # Choix de l'état
         etat = random.choice(etats) if mixte else etats[0]
 
-        # Split des champs
+        # Découpage des champs PIPE
         details = str(ligne.get("Reference", "")).split("|")
         qtes    = str(ligne.get("Quantité", "")).split("|")
         pv      = str(ligne.get("prixUnitHt", "")).split("|")
@@ -79,15 +84,26 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
         no_ligne = 1
 
         for i in range(len(details)):
-            # 🚩 Skip si Code Mistral vide
-            if not codes[i].strip():
+            # 🚩 Skip si code mistral absent
+            if i >= len(codes) or not str(codes[i]).strip():
                 continue
 
-            # Tracking uniquement si "En cours de livraison"
+            # Tracking uniquement si état = En cours de livraison
             tracking = "XR475205445TS" if etat == "En cours de livraison" else ""
 
+            # Division des prix par 100 si numérique
+            try:
+                pv_val = float(pv[i]) / 100 if i < len(pv) and pv[i] not in ["", None] else ""
+            except ValueError:
+                pv_val = ""
+
+            try:
+                pa_val = float(pa[i]) / 100 if i < len(pa) and pa[i] not in ["", None] else ""
+            except ValueError:
+                pa_val = ""
+
             ligne_export = {
-                "No Transaction": details[i],
+                "No Transaction": details[i] if i < len(details) else "",
                 "No Ligne": no_ligne,
                 "No Commande Client": num_commande,
                 "Etat": etat,
@@ -96,15 +112,14 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
                 "Code article": codes[i],
                 "Désignation": libs[i] if i < len(libs) else "",
                 "Quantité": qtes[i] if i < len(qtes) else "",
-                # ⚡️ Diviser par 100 car les prix sont en centimes
-                "PV net": float(pv[i]) / 100 if i < len(pv) and pv[i].isdigit() else "",
-                "PA net": float(pa[i]) / 100 if i < len(pa) and pa[i].isdigit() else ""
+                "PV net": pv_val,
+                "PA net": pa_val
             }
             lignes_export.append(ligne_export)
             no_ligne += 1
 
         if not lignes_export:
-            continue  # saute les commandes vides après filtrage
+            continue  # saute la commande si aucune ligne exploitable
 
         df_export = pd.DataFrame(lignes_export)
 
@@ -113,7 +128,7 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
         ref_for_name = details[0] if details else str(idx)
         fichier_nom = f"OU_EXP_{ref_for_name}_{horodatage}.csv"
 
-        # Conversion buffer mémoire
+        # Conversion en buffer mémoire (latin-1 safe)
         buffer = BytesIO()
         df_export = df_export.applymap(lambda x: str(x).encode("latin-1", errors="replace").decode("latin-1"))
         df_export.to_csv(buffer, sep=";", index=False, encoding="latin-1")
@@ -126,7 +141,6 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
             num_commande += 1
 
     return fichiers
-
 
 # =============================
 # Fonction upload SFTP

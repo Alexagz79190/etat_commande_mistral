@@ -149,8 +149,8 @@ Cette application permet de :
 ---
 
 ### 📑 Fichier source attendu (Export Commande → BOSS)
-     Filtrer d'abord les commandes Date de validation pour ne pas avoir d'ancienne
-     commandes et choisir les états : Commande validée - Commande en préparation
+Filtrer d'abord les commandes Date de validation pour ne pas avoir d'ancienne
+commandes et choisir les états : Commande validée - Commande en préparation
 | Champ source       | Bloc |
 |--------------------|-------------|
 | **Reference**      | Commande
@@ -192,7 +192,7 @@ if fichier_source:
 
 # Sélection options
 etats_selectionnes = st.multiselect("📌 Choisir les états de commande :", ETATS, default=[ETATS[0]])
-transporteur = st.text_input("🚚 Numéro du transporteur (ex: 1220,1524,2187, 4414", value="")
+transporteur = st.text_input("🚚 Numéro du transporteur (ex: 1220,1524,2187, 4414)", value="")
 nb_max = st.number_input("🔢 Nombre max de commandes (0 = toutes)", min_value=0, value=0, step=1)
 mixte = st.checkbox("🎲 Mélanger les états (aléatoire)", value=False)
 

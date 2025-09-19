@@ -60,12 +60,12 @@ TRANSPORTEURS = {
 # =============================
 # Fonction génération fichiers commande
 # =============================
-def generer_csv_par_commande(df, etats, mixte, transporteur_cfg, nb_max=None):
+def generer_csv_par_commande(df, etats, mixte, transporteurs, nb_max=None):
     """
     Génère un ou plusieurs fichiers OU_EXP_xxx.csv en mémoire à partir du fichier source.
     - Filtre les lignes sans Code Mistral
     - Divise les prix par 100 et force la virgule comme séparateur décimal
-    - Utilise transporteur sélectionné (No + Tracking)
+    - Affecte un transporteur par commande (rotation ou aléatoire si mixte)
     """
     no_commande_base = 1873036
     num_commande = no_commande_base
@@ -77,13 +77,22 @@ def generer_csv_par_commande(df, etats, mixte, transporteur_cfg, nb_max=None):
         df = df[df["Code Mistral"].astype(str).str.strip() != ""]
 
     nb_gen = 0
+    transporteurs_list = list(transporteurs)
 
     for idx, ligne in df.iterrows():
         if nb_max and nb_gen >= nb_max:
             break
 
+        # État
         etat = random.choice(etats) if mixte else etats[0]
 
+        # Transporteur (rotation ou aléatoire)
+        if mixte:
+            transporteur_cfg = TRANSPORTEURS[random.choice(transporteurs_list)]
+        else:
+            transporteur_cfg = TRANSPORTEURS[transporteurs_list[nb_gen % len(transporteurs_list)]]
+
+        # Découpage des champs PIPE
         details = str(ligne.get("Reference", "")).split("|")
         qtes    = str(ligne.get("Quantité", "")).split("|")
         pv      = str(ligne.get("prixUnitHt", "")).split("|")
@@ -189,38 +198,6 @@ Cette application permet de :
 1. Charger un **fichier source ERP** (CSV)  
 2. Générer un ou plusieurs fichiers **commande BOSS** au format attendu  
 3. Les envoyer automatiquement sur le serveur **SFTP** (`refonteTest`)
-
----
-
-### 📑 Fichier source attendu (Export Commande → BOSS)
-Filtrer d'abord les commandes Date de validation pour ne pas avoir d'anciennes
-commandes et choisir les états : **Commande validée** - **Commande en préparation**
-
-| Champ source       | Bloc |
-|--------------------|-------------|
-| **Reference**      | Commande |
-| **Quantité**       | Détail de commande - details |
-| **prixUnitHt**     | Détail de commande - details |
-| **prixAchatHt**    | Détail de commande - details |
-| **Code Mistral**   | Détail de commande - details |
-| **Libellé**        | Détail de commande - details |
-
----
-
-### 📑 Fichier généré (application → BOSS)
-| Champ sortie       | Règle / Source |
-|--------------------|----------------|
-| **No Transaction** | Colonne `Reference` |
-| **No Ligne**       | N° de ligne incrémental |
-| **No Commande Client** | Numéro de base `1873036` (incrément si état = "En cours de livraison") |
-| **Etat**           | Choisi parmi la liste |
-| **No Tracking**    | Automatique si état = "En cours de livraison" |
-| **No Transporteur**| Selon transporteur choisi |
-| **Code article**   | Colonne `Code Mistral` |
-| **Désignation**    | Colonne `Libellé` |
-| **Quantité**       | Colonne `Quantité` |
-| **PV net**         | Colonne `prixUnitHt` ÷ 100 (virgule comme séparateur décimal) |
-| **PA net**         | Colonne `prixAchatHt` ÷ 100 (virgule comme séparateur décimal) |
 """)
 
 # Upload fichier source
@@ -237,9 +214,9 @@ if fichier_source:
 
 # Sélection options
 etats_selectionnes = st.multiselect("📌 Choisir les états de commande :", ETATS, default=[ETATS[0]])
-transporteur_nom = st.selectbox("🚚 Choisir le transporteur :", list(TRANSPORTEURS.keys()))
+transporteurs_selectionnes = st.multiselect("🚚 Choisir un ou plusieurs transporteurs :", list(TRANSPORTEURS.keys()), default=["Chronopost"])
 nb_max = st.number_input("🔢 Nombre max de commandes (0 = toutes)", min_value=0, value=0, step=1)
-mixte = st.checkbox("🎲 Mélanger les états (aléatoire)", value=False)
+mixte = st.checkbox("🎲 Mélanger états/transporteurs (aléatoire)", value=False)
 
 # Bouton
 if st.button("▶️ Générer et envoyer sur SFTP"):
@@ -247,6 +224,8 @@ if st.button("▶️ Générer et envoyer sur SFTP"):
         st.error("Merci de charger le fichier source.")
     elif not etats_selectionnes:
         st.error("Merci de sélectionner au moins un état.")
+    elif not transporteurs_selectionnes:
+        st.error("Merci de sélectionner au moins un transporteur.")
     else:
         try:
             df = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
@@ -258,7 +237,7 @@ if st.button("▶️ Générer et envoyer sur SFTP"):
             df,
             etats_selectionnes,
             mixte,
-            TRANSPORTEURS[transporteur_nom],
+            transporteurs_selectionnes,
             nb_max if nb_max > 0 else None
         )
 

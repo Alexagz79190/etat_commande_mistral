@@ -9,7 +9,6 @@ import pandas as pd
 import random
 from datetime import datetime
 from io import BytesIO
-import io
 import paramiko
 import os
 
@@ -49,19 +48,25 @@ ETATS = [
 ]
 
 # =============================
-# Helper lecture CSV
+# Transporteurs
 # =============================
-def lire_csv_source(uploaded_file):
-    """
-    Recharge le CSV en mémoire pour éviter les erreurs de curseur.
-    """
-    raw = uploaded_file.getvalue()
-    return pd.read_csv(io.BytesIO(raw), sep=",", encoding="utf-8")
+TRANSPORTEURS = {
+    "Chronopost": {"no": "1220", "tracking": "XR475205445TS"},
+    "Colissimo": {"no": "1524", "tracking": "6A03567806597"},
+    "Dachser":   {"no": "4414", "tracking": "AG01868943"},
+    "Geodis":    {"no": "2187", "tracking": "1G4T32SZTQL4"},
+}
 
 # =============================
 # Fonction génération fichiers commande
 # =============================
-def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
+def generer_csv_par_commande(df, etats, mixte, transporteur_cfg, nb_max=None):
+    """
+    Génère un ou plusieurs fichiers OU_EXP_xxx.csv en mémoire à partir du fichier source.
+    - Filtre les lignes sans Code Mistral
+    - Divise les prix par 100 et force la virgule comme séparateur décimal
+    - Utilise transporteur sélectionné (No + Tracking)
+    """
     no_commande_base = 1873036
     num_commande = no_commande_base
     fichiers = []
@@ -71,7 +76,7 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
         df = df[df["Code Mistral"].notna()]
         df = df[df["Code Mistral"].astype(str).str.strip() != ""]
 
-    nb_gen = 0  # ✅ compteur de commandes générées
+    nb_gen = 0
 
     for idx, ligne in df.iterrows():
         if nb_max and nb_gen >= nb_max:
@@ -93,15 +98,17 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
             if i >= len(codes) or not str(codes[i]).strip():
                 continue
 
-            tracking = "XR475205445TS" if etat == "En cours de livraison" else ""
+            # Tracking uniquement si état = En cours de livraison
+            tracking = transporteur_cfg["tracking"] if etat == "En cours de livraison" else ""
 
+            # Division des prix par 100 et format avec virgule
             try:
-                pv_val = float(pv[i]) / 100 if i < len(pv) and pv[i] not in ["", None] else ""
+                pv_val = "{:.2f}".format(float(pv[i]) / 100).replace(".", ",") if i < len(pv) and pv[i] not in ["", None] else ""
             except ValueError:
                 pv_val = ""
 
             try:
-                pa_val = float(pa[i]) / 100 if i < len(pa) and pa[i] not in ["", None] else ""
+                pa_val = "{:.2f}".format(float(pa[i]) / 100).replace(".", ",") if i < len(pa) and pa[i] not in ["", None] else ""
             except ValueError:
                 pa_val = ""
 
@@ -111,7 +118,7 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
                 "No Commande Client": num_commande,
                 "Etat": etat,
                 "No Tracking": tracking,
-                "No Transporteur": transporteur,
+                "No Transporteur": transporteur_cfg["no"],
                 "Code article": codes[i],
                 "Désignation": libs[i] if i < len(libs) else "",
                 "Quantité": qtes[i] if i < len(qtes) else "",
@@ -136,7 +143,7 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
         buffer.seek(0)
 
         fichiers.append((fichier_nom, buffer))
-        nb_gen += 1  # ✅ incrément seulement si une commande est bien générée
+        nb_gen += 1
 
         if etat == "En cours de livraison":
             num_commande += 1
@@ -182,37 +189,67 @@ Cette application permet de :
 1. Charger un **fichier source ERP** (CSV)  
 2. Générer un ou plusieurs fichiers **commande BOSS** au format attendu  
 3. Les envoyer automatiquement sur le serveur **SFTP** (`refonteTest`)
+
+---
+
+### 📑 Fichier source attendu (Export Commande → BOSS)
+Filtrer d'abord les commandes Date de validation pour ne pas avoir d'anciennes
+commandes et choisir les états : **Commande validée** - **Commande en préparation**
+
+| Champ source       | Bloc |
+|--------------------|-------------|
+| **Reference**      | Commande |
+| **Quantité**       | Détail de commande - details |
+| **prixUnitHt**     | Détail de commande - details |
+| **prixAchatHt**    | Détail de commande - details |
+| **Code Mistral**   | Détail de commande - details |
+| **Libellé**        | Détail de commande - details |
+
+---
+
+### 📑 Fichier généré (application → BOSS)
+| Champ sortie       | Règle / Source |
+|--------------------|----------------|
+| **No Transaction** | Colonne `Reference` |
+| **No Ligne**       | N° de ligne incrémental |
+| **No Commande Client** | Numéro de base `1873036` (incrément si état = "En cours de livraison") |
+| **Etat**           | Choisi parmi la liste |
+| **No Tracking**    | Automatique si état = "En cours de livraison" |
+| **No Transporteur**| Selon transporteur choisi |
+| **Code article**   | Colonne `Code Mistral` |
+| **Désignation**    | Colonne `Libellé` |
+| **Quantité**       | Colonne `Quantité` |
+| **PV net**         | Colonne `prixUnitHt` ÷ 100 (virgule comme séparateur décimal) |
+| **PA net**         | Colonne `prixAchatHt` ÷ 100 (virgule comme séparateur décimal) |
 """)
 
 # Upload fichier source
 fichier_source = st.file_uploader("📂 Charger le fichier CSV source", type=["csv"])
 
-# Aperçu
+# Prévisualisation
 if fichier_source:
     try:
-        df_preview = lire_csv_source(fichier_source)
+        df_preview = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
         st.markdown("### 👀 Aperçu du fichier source (5 premières lignes)")
         st.dataframe(df_preview.head())
     except Exception as e:
         st.error(f"Erreur lecture CSV: {e}")
 
-# Options
+# Sélection options
 etats_selectionnes = st.multiselect("📌 Choisir les états de commande :", ETATS, default=[ETATS[0]])
-transporteur = st.text_input("🚚 Numéro du transporteur", value="")
+transporteur_nom = st.selectbox("🚚 Choisir le transporteur :", list(TRANSPORTEURS.keys()))
 nb_max = st.number_input("🔢 Nombre max de commandes (0 = toutes)", min_value=0, value=0, step=1)
-mixte = st.checkbox("🎲 Mélanger les états", value=False)
+mixte = st.checkbox("🎲 Mélanger les états (aléatoire)", value=False)
 
-# Action
+# Bouton
 if st.button("▶️ Générer et envoyer sur SFTP"):
     if not fichier_source:
         st.error("Merci de charger le fichier source.")
     elif not etats_selectionnes:
         st.error("Merci de sélectionner au moins un état.")
-    elif not transporteur:
-        st.error("Merci de renseigner le transporteur.")
     else:
         try:
-            df = lire_csv_source(fichier_source)
+            df = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
         except Exception as e:
             st.error(f"Erreur lecture CSV: {e}")
             st.stop()
@@ -221,7 +258,7 @@ if st.button("▶️ Générer et envoyer sur SFTP"):
             df,
             etats_selectionnes,
             mixte,
-            transporteur,
+            TRANSPORTEURS[transporteur_nom],
             nb_max if nb_max > 0 else None
         )
 

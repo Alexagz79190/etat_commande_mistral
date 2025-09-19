@@ -148,15 +148,16 @@ Cette application permet de :
 
 ---
 
-### 📑 Fichier source attendu (ERP → application)
-| Champ source       | Description |
+### 📑 Fichier source attendu (Export Commande → BOSS)
+     Fliltrer d'abord les commandes Date de validation pour ne pas avoir d'ancienne commandes et état : Commande validée - Commande en préparation
+| Champ source       | Bloc |
 |--------------------|-------------|
-| **Reference**      | Identifiant unique de transaction |
-| **Quantité**       | Quantité commandée (séparée par `|` si multi-lignes) |
-| **prixUnitHt**     | Prix de vente unitaire HT |
-| **prixAchatHt**    | Prix d’achat unitaire HT |
-| **Code Mistral**   | Code article Mistral |
-| **Libellé**        | Désignation de l’article |
+| **Reference**      | Commande
+| **Quantité**       | Detail de commande - details
+| **prixUnitHt**     | Detail de commande - details
+| **prixAchatHt**    | Detail de commande - details
+| **Code Mistral**   | Detail de commande - details
+| **Libellé**        | Detail de commande - details
 
 ---
 
@@ -190,7 +191,7 @@ if fichier_source:
 
 # Sélection options
 etats_selectionnes = st.multiselect("📌 Choisir les états de commande :", ETATS, default=[ETATS[0]])
-transporteur = st.text_input("🚚 Nom du transporteur", value="")
+transporteur = st.text_input("🚚 Numéro du transporteur (ex: 1220,1524,2187, 4414", value="")
 nb_max = st.number_input("🔢 Nombre max de commandes (0 = toutes)", min_value=0, value=0, step=1)
 mixte = st.checkbox("🎲 Mélanger les états (aléatoire)", value=False)
 

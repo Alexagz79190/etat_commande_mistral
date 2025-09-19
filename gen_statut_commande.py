@@ -73,8 +73,19 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
 
         for i in range(len(details)):
             tracking = "XR475205445TS" if etat == "En cours de livraison" else ""
-            lignes_export.append({
-                "No Transaction": details[i],
+
+            # Conversion prix en euros (division par 100 si numérique)
+            try:
+                prix_v = float(pv[i]) / 100 if i < len(pv) and pv[i].strip() else ""
+            except:
+                prix_v = ""
+            try:
+                prix_a = float(pa[i]) / 100 if i < len(pa) and pa[i].strip() else ""
+            except:
+                prix_a = ""
+
+            ligne_export = {
+                "No Transaction": details[i] if i < len(details) else "",
                 "No Ligne": no_ligne,
                 "No Commande Client": num_commande,
                 "Etat": etat,
@@ -83,12 +94,14 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
                 "Code article": codes[i] if i < len(codes) else "",
                 "Désignation": libs[i] if i < len(libs) else "",
                 "Quantité": qtes[i] if i < len(qtes) else "",
-                "PV net": pv[i] if i < len(pv) else "",
-                "PA net": pa[i] if i < len(pa) else ""
-            })
+                "PV net": prix_v,
+                "PA net": prix_a
+            }
+            lignes_export.append(ligne_export)
             no_ligne += 1
 
         df_export = pd.DataFrame(lignes_export)
+
         horodatage = datetime.now().strftime("%Y%m%d%H%M%S")
         ref_for_name = details[0] if details else str(idx)
         fichier_nom = f"OU_EXP_{ref_for_name}_{horodatage}.csv"

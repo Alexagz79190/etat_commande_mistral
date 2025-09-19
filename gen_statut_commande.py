@@ -149,7 +149,8 @@ Cette application permet de :
 ---
 
 ### 📑 Fichier source attendu (Export Commande → BOSS)
-     Fliltrer d'abord les commandes Date de validation pour ne pas avoir d'ancienne commandes et état : Commande validée - Commande en préparation
+     Filtrer d'abord les commandes Date de validation pour ne pas avoir d'ancienne
+     commandes et choisir les états : Commande validée - Commande en préparation
 | Champ source       | Bloc |
 |--------------------|-------------|
 | **Reference**      | Commande

@@ -53,14 +53,21 @@ ETATS = [
 def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
     no_commande_base = 1873036
     num_commande = no_commande_base
+
     fichiers = []
+
+    # ⚡️ Supprimer lignes avec Code Mistral vide ou NaN
+    df = df[df["Code Mistral"].notna()]                  # enlève NaN
+    df = df[df["Code Mistral"].str.strip() != ""]        # enlève vides
 
     for idx, ligne in df.iterrows():
         if nb_max and idx >= nb_max:
             break
 
+        # État
         etat = random.choice(etats) if mixte else etats[0]
 
+        # Split des champs
         details = str(ligne.get("Reference", "")).split("|")
         qtes    = str(ligne.get("Quantité", "")).split("|")
         pv      = str(ligne.get("prixUnitHt", "")).split("|")
@@ -72,40 +79,41 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
         no_ligne = 1
 
         for i in range(len(details)):
+            # 🚩 Skip si Code Mistral vide
+            if not codes[i].strip():
+                continue
+
+            # Tracking uniquement si "En cours de livraison"
             tracking = "XR475205445TS" if etat == "En cours de livraison" else ""
 
-            # Conversion prix en euros (division par 100 si numérique)
-            try:
-                prix_v = float(pv[i]) / 100 if i < len(pv) and pv[i].strip() else ""
-            except:
-                prix_v = ""
-            try:
-                prix_a = float(pa[i]) / 100 if i < len(pa) and pa[i].strip() else ""
-            except:
-                prix_a = ""
-
             ligne_export = {
-                "No Transaction": details[i] if i < len(details) else "",
+                "No Transaction": details[i],
                 "No Ligne": no_ligne,
                 "No Commande Client": num_commande,
                 "Etat": etat,
                 "No Tracking": tracking,
                 "No Transporteur": transporteur,
-                "Code article": codes[i] if i < len(codes) else "",
+                "Code article": codes[i],
                 "Désignation": libs[i] if i < len(libs) else "",
                 "Quantité": qtes[i] if i < len(qtes) else "",
-                "PV net": prix_v,
-                "PA net": prix_a
+                # ⚡️ Diviser par 100 car les prix sont en centimes
+                "PV net": float(pv[i]) / 100 if i < len(pv) and pv[i].isdigit() else "",
+                "PA net": float(pa[i]) / 100 if i < len(pa) and pa[i].isdigit() else ""
             }
             lignes_export.append(ligne_export)
             no_ligne += 1
 
+        if not lignes_export:
+            continue  # saute les commandes vides après filtrage
+
         df_export = pd.DataFrame(lignes_export)
 
+        # Nom fichier
         horodatage = datetime.now().strftime("%Y%m%d%H%M%S")
         ref_for_name = details[0] if details else str(idx)
         fichier_nom = f"OU_EXP_{ref_for_name}_{horodatage}.csv"
 
+        # Conversion buffer mémoire
         buffer = BytesIO()
         df_export = df_export.applymap(lambda x: str(x).encode("latin-1", errors="replace").decode("latin-1"))
         df_export.to_csv(buffer, sep=";", index=False, encoding="latin-1")
@@ -113,10 +121,12 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
 
         fichiers.append((fichier_nom, buffer))
 
+        # Incrémentation si état = en cours de livraison
         if etat == "En cours de livraison":
             num_commande += 1
 
     return fichiers
+
 
 # =============================
 # Fonction upload SFTP

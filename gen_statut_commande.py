@@ -1,6 +1,7 @@
+# app.py
 # -*- coding: utf-8 -*-
 """
-App Streamlit : génération de fichiers de simulation + envoi FTP
+App Streamlit : génération de fichiers de simulation + envoi FTPS
 """
 
 import streamlit as st
@@ -9,14 +10,31 @@ import random
 from datetime import datetime
 from io import BytesIO
 from ftplib import FTP_TLS
+import os
 
 # =============================
-# Paramètres FTP
+# Charger les secrets FTP (Streamlit secrets ou variables d'environnement)
 # =============================
-FTP_HOST = "ftp.agrizone.net"
-FTP_USER = "mistral"
-FTP_PASS = "c1secret"
-FTP_DIR  = "refonteTest"
+def get_ftp_config():
+    # Format recommandé dans Streamlit Cloud: [ftp] host = "...", user = "...", pass = "...", dir = "..."
+    try:
+        ftp_conf = st.secrets["ftp"]
+        return {
+            "host": ftp_conf.get("host"),
+            "user": ftp_conf.get("user"),
+            "pass": ftp_conf.get("pass"),
+            "dir": ftp_conf.get("dir", "refonteTest")
+        }
+    except Exception:
+        # Fallback sur variables d'environnement (pratique en dev local)
+        return {
+            "host": os.environ.get("FTP_HOST"),
+            "user": os.environ.get("FTP_USER"),
+            "pass": os.environ.get("FTP_PASS"),
+            "dir": os.environ.get("FTP_DIR", "refonteTest")
+        }
+
+FTP_CFG = get_ftp_config()
 
 # États
 ETATS = [
@@ -46,12 +64,12 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
         etat = random.choice(etats) if mixte else etats[0]
 
         # Split des détails
-        details = str(ligne["Reference"]).split("|")
-        qtes    = str(ligne["Quantité"]).split("|")
-        pv      = str(ligne["prixUnitHt"]).split("|")
-        pa      = str(ligne["prixAchatHt"]).split("|")
-        codes   = str(ligne["Code Mistral"]).split("|")
-        libs    = str(ligne["Libellé"]).split("|")
+        details = str(ligne.get("Reference", "")).split("|")
+        qtes    = str(ligne.get("Quantité", "")).split("|")
+        pv      = str(ligne.get("prixUnitHt", "")).split("|")
+        pa      = str(ligne.get("prixAchatHt", "")).split("|")
+        codes   = str(ligne.get("Code Mistral", "")).split("|")
+        libs    = str(ligne.get("Libellé", "")).split("|")
 
         lignes_export = []
         no_ligne = 1
@@ -80,10 +98,14 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
 
         # Nom de fichier
         horodatage = datetime.now().strftime("%Y%m%d%H%M%S")
-        fichier_nom = f"OU_EXP_{num_commande}_{horodatage}.csv"
+        # J'utilise la 1ère référence comme identifiant de fichier (comme demandé auparavant)
+        ref_for_name = details[0] if details else str(idx)
+        fichier_nom = f"OU_EXP_{ref_for_name}_{horodatage}.csv"
 
-        # Conversion en buffer mémoire
+        # Conversion en buffer mémoire (latin-1 ; remplacement des caractères non-encodables)
         buffer = BytesIO()
+        # on force replacement pour éviter UnicodeEncodeError
+        df_export = df_export.applymap(lambda x: str(x).encode("latin-1", errors="replace").decode("latin-1"))
         df_export.to_csv(buffer, sep=";", index=False, encoding="latin-1")
         buffer.seek(0)
 
@@ -96,55 +118,97 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
     return fichiers
 
 # =============================
-# Fonction envoi FTP
+# Fonction envoi FTPS
 # =============================
-def upload_ftp(fichiers):
+def upload_ftp(fichiers, ftp_cfg, timeout=20):
+    host = ftp_cfg.get("host")
+    user = ftp_cfg.get("user")
+    pwd  = ftp_cfg.get("pass")
+    dir_remote = ftp_cfg.get("dir", "refonteTest")
+
+    if not host or not user or not pwd:
+        return False, "Identifiants FTP manquants (vérifier st.secrets ou variables d'environnement)."
+
     try:
         ftps = FTP_TLS()
-        ftps.connect(FTP_HOST, 21, timeout=15)
-        ftps.auth()
-        ftps.login(FTP_USER, FTP_PASS)
+        ftps.connect(host, 21, timeout=timeout)
+        ftps.auth()               # AUTH TLS
+        ftps.login(user, pwd)
         ftps.prot_p()
-        ftps.cwd(FTP_DIR)
+        ftps.set_pasv(True)
+
+        # Essayer d'aller dans le dossier, sinon tenter de le créer
+        try:
+            ftps.cwd(dir_remote)
+        except Exception:
+            try:
+                ftps.mkd(dir_remote)
+                ftps.cwd(dir_remote)
+            except Exception as e:
+                ftps.quit()
+                return False, f"Impossible d'accéder/créer le dossier distant '{dir_remote}': {e}"
 
         for nom, buffer in fichiers:
             buffer.seek(0)
             ftps.storbinary(f"STOR {nom}", buffer)
         ftps.quit()
-        return True, f"{len(fichiers)} fichier(s) envoyé(s) sur {FTP_DIR}"
+        return True, f"{len(fichiers)} fichier(s) envoyé(s) sur {dir_remote}"
     except Exception as e:
         return False, str(e)
 
 # =============================
 # Interface Streamlit
 # =============================
-st.title("📦 Simulation états de livraison + Envoi FTP")
+st.title("📦 Simulation états de livraison + Envoi FTPS (secrets)")
+
+st.markdown("⚠️ Les identifiants FTP sont lus depuis `st.secrets['ftp']` ou depuis les variables d'environnement. Ne les mettez pas dans le code.")
 
 # Upload fichier source
 fichier_source = st.file_uploader("Charger le fichier CSV source", type=["csv"])
 
 # Sélection états
-etats_selectionnes = st.multiselect("Choisir les états :", ETATS)
+etats_selectionnes = st.multiselect("Choisir les états :", ETATS, default=[ETATS[0]])
 
 # Transporteur
-transporteur = st.text_input("Nom du transporteur")
+transporteur = st.text_input("Nom du transporteur", value="")
 
 # Nb max commandes
-nb_max = st.number_input("Nombre max de commandes (0 = toutes)", min_value=0, value=0)
+nb_max = st.number_input("Nombre max de commandes (0 = toutes)", min_value=0, value=0, step=1)
 
 # Mixte
 mixte = st.checkbox("Mélanger les états", value=False)
 
-if st.button("Générer et envoyer sur FTP"):
-    if not fichier_source or not etats_selectionnes or not transporteur:
-        st.error("Merci de remplir toutes les informations.")
+# Bouton
+if st.button("Générer et envoyer sur FTPS"):
+    if not fichier_source:
+        st.error("Merci de charger le fichier source.")
+    elif not etats_selectionnes:
+        st.error("Merci de sélectionner au moins un état.")
+    elif not transporteur:
+        st.error("Merci de renseigner le transporteur.")
     else:
-        df = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
+        try:
+            df = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
+        except Exception as e:
+            st.error(f"Erreur lecture CSV: {e}")
+            st.stop()
+
         fichiers = generer_csv_par_commande(
-            df, etats_selectionnes, mixte, transporteur, nb_max if nb_max > 0 else None
+            df,
+            etats_selectionnes,
+            mixte,
+            transporteur,
+            nb_max if nb_max > 0 else None
         )
-        ok, msg = upload_ftp(fichiers)
+
+        st.info(f"{len(fichiers)} fichier(s) généré(s) en mémoire, tentative d'envoi FTPS...")
+
+        ok, msg = upload_ftp(fichiers, FTP_CFG)
         if ok:
             st.success(msg)
         else:
-            st.error("Erreur FTP : " + msg)
+            st.error("Erreur FTPS : " + msg)
+
+        # proposer le téléchargement local (zip ou fichiers) — optionnel
+        if ok:
+            st.download_button("Télécharger le 1er fichier généré", fichiers[0][1], file_name=fichiers[0][0])

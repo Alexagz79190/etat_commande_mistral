@@ -120,22 +120,26 @@ def upload_sftp(fichiers, sftp_cfg):
         transport.connect(username=user, password=pwd)
         sftp = paramiko.SFTPClient.from_transport(transport)
 
-        # Debug : où on est au départ
-        cwd = sftp.getcwd()
-        st.write("📂 Répertoire courant après login:", cwd)
-        st.write("📋 Contenu:", sftp.listdir())
+        # Debug
+        st.write("📂 Répertoire courant après login:", sftp.getcwd())
+        st.write("📋 Contenu racine:", sftp.listdir())
 
-        # Essayer d'aller dans dir_remote
-        try:
-            sftp.chdir(dir_remote)   # relatif
-        except IOError:
+        # Essayer différentes syntaxes pour accéder au dossier
+        ok = False
+        for path in [dir_remote, f"./{dir_remote}", f"/{dir_remote}"]:
             try:
-                sftp.chdir("/" + dir_remote)  # absolu
-                dir_remote = "/" + dir_remote
-            except Exception as e:
-                return False, f"Impossible d'accéder au dossier '{dir_remote}' : {e}"
+                sftp.chdir(path)
+                st.write(f"✅ Accès au dossier {path}")
+                dir_remote = path
+                ok = True
+                break
+            except IOError:
+                st.write(f"❌ Impossible avec {path}")
 
-        # Upload fichiers
+        if not ok:
+            return False, f"Impossible d'accéder au dossier {dir_remote}"
+
+        # Upload
         for nom, buffer in fichiers:
             buffer.seek(0)
             remote_path = f"{dir_remote}/{nom}"
@@ -147,6 +151,7 @@ def upload_sftp(fichiers, sftp_cfg):
         return True, f"{len(fichiers)} fichier(s) envoyé(s) en SFTP vers {dir_remote}"
     except Exception as e:
         return False, str(e)
+
 
 # =============================
 # Interface Streamlit

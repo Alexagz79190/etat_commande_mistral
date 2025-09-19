@@ -135,30 +135,27 @@ def upload_ftp(fichiers, ftp_cfg, timeout=20):
 
     try:
         ftps = FTP_TLS()
+        ftps.set_debuglevel(2)   # 🔎 log complet des échanges
         ftps.connect(host, 21, timeout=timeout)
-        ftps.auth()               # AUTH TLS
-        ftps.login(user, pwd)
-        ftps.prot_p()
-        ftps.set_pasv(True)
 
-        # Essayer d'aller dans le dossier, sinon tenter de le créer
+        # Variante 1 : AUTH TLS avant login
         try:
-            ftps.cwd(dir_remote)
-        except Exception:
-            try:
-                ftps.mkd(dir_remote)
-                ftps.cwd(dir_remote)
-            except Exception as e:
-                ftps.quit()
-                return False, f"Impossible d'accéder/créer le dossier distant '{dir_remote}': {e}"
+            st.write("👉 Tentative AUTH TLS avant login")
+            ftps.auth()
+            ftps.login(user, pwd)
+        except Exception as e:
+            st.error(f"Échec variante AUTH TLS: {e}")
+            ftps.close()
 
-        for nom, buffer in fichiers:
-            buffer.seek(0)
-            ftps.storbinary(f"STOR {nom}", buffer)
-        ftps.quit()
-        return True, f"{len(fichiers)} fichier(s) envoyé(s) sur {dir_remote}"
-    except Exception as e:
-        return False, str(e)
+        # Variante 2 : Login direct sans AUTH TLS
+        try:
+            st.write("👉 Tentative login direct sans AUTH TLS")
+            ftps = FTP_TLS()
+            ftps.set_debuglevel(2)
+            ftps.connect(host, 21, timeout=timeout)
+            ftps.login(user, pwd)
+        except Exception as e:
+            st.error(f"Échec variante login direct: {e}")
 
 # =============================
 # Interface Streamlit

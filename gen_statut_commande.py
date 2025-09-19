@@ -129,33 +129,44 @@ def upload_ftp(fichiers, ftp_cfg, timeout=20):
     # Debug : afficher ce qui est lu dans secrets
     st.write("🔑 FTP config lue:", {"host": host, "user": user, "pass": "***", "dir": dir_remote})
 
-
     if not host or not user or not pwd:
         return False, "Identifiants FTP manquants (vérifier st.secrets ou variables d'environnement)."
 
+    # Essai 1 : AUTH TLS avant login
     try:
+        st.write("👉 Tentative AUTH TLS avant login")
         ftps = FTP_TLS()
-        ftps.set_debuglevel(2)   # 🔎 log complet des échanges
+        ftps.set_debuglevel(2)
         ftps.connect(host, 21, timeout=timeout)
+        ftps.auth()
+        ftps.login(user, pwd)
+        ftps.prot_p()
+        ftps.cwd(dir_remote)
+        for nom, buffer in fichiers:
+            buffer.seek(0)
+            ftps.storbinary(f"STOR {nom}", buffer)
+        ftps.quit()
+        return True, f"{len(fichiers)} fichier(s) envoyé(s) (AUTH TLS)"
+    except Exception as e1:
+        st.error(f"Échec variante AUTH TLS: {e1}")
 
-        # Variante 1 : AUTH TLS avant login
-        try:
-            st.write("👉 Tentative AUTH TLS avant login")
-            ftps.auth()
-            ftps.login(user, pwd)
-        except Exception as e:
-            st.error(f"Échec variante AUTH TLS: {e}")
-            ftps.close()
-
-        # Variante 2 : Login direct sans AUTH TLS
-        try:
-            st.write("👉 Tentative login direct sans AUTH TLS")
-            ftps = FTP_TLS()
-            ftps.set_debuglevel(2)
-            ftps.connect(host, 21, timeout=timeout)
-            ftps.login(user, pwd)
-        except Exception as e:
-            st.error(f"Échec variante login direct: {e}")
+    # Essai 2 : login direct sans AUTH TLS
+    try:
+        st.write("👉 Tentative login direct sans AUTH TLS")
+        ftps = FTP_TLS()
+        ftps.set_debuglevel(2)
+        ftps.connect(host, 21, timeout=timeout)
+        ftps.login(user, pwd)
+        ftps.prot_p()
+        ftps.cwd(dir_remote)
+        for nom, buffer in fichiers:
+            buffer.seek(0)
+            ftps.storbinary(f"STOR {nom}", buffer)
+        ftps.quit()
+        return True, f"{len(fichiers)} fichier(s) envoyé(s) (login direct)"
+    except Exception as e2:
+        st.error(f"Échec variante login direct: {e2}")
+        return False, "Impossible de se connecter par AUTH TLS ni login direct"
 
 # =============================
 # Interface Streamlit

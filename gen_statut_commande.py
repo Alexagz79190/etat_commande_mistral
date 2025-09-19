@@ -71,8 +71,10 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
         df = df[df["Code Mistral"].notna()]
         df = df[df["Code Mistral"].astype(str).str.strip() != ""]
 
+    nb_gen = 0  # ✅ compteur de commandes générées
+
     for idx, ligne in df.iterrows():
-        if nb_max and idx >= nb_max:
+        if nb_max and nb_gen >= nb_max:
             break
 
         etat = random.choice(etats) if mixte else etats[0]
@@ -134,6 +136,7 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
         buffer.seek(0)
 
         fichiers.append((fichier_nom, buffer))
+        nb_gen += 1  # ✅ incrément seulement si une commande est bien générée
 
         if etat == "En cours de livraison":
             num_commande += 1

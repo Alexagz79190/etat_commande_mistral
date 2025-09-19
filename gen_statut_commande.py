@@ -107,39 +107,35 @@ def generer_csv_par_commande(df, etats, mixte, transporteur, nb_max=None):
 # Fonction envoi SFTP
 # =============================
 def upload_sftp(fichiers, sftp_cfg):
+    import stat
     host = sftp_cfg.get("host")
     user = sftp_cfg.get("user")
     pwd  = sftp_cfg.get("pass")
     dir_remote = sftp_cfg.get("dir", "refonteTest")
-
-    if not host or not user or not pwd:
-        return False, "Identifiants SFTP manquants"
 
     try:
         transport = paramiko.Transport((host, 22))
         transport.connect(username=user, password=pwd)
         sftp = paramiko.SFTPClient.from_transport(transport)
 
-        # Debug
         st.write("📂 Répertoire courant après login:", sftp.getcwd())
-        st.write("📋 Contenu racine:", sftp.listdir())
+        st.write("📋 Contenu détaillé:")
+        for entry in sftp.listdir_attr():
+            type_str = "📄 Fichier"
+            if stat.S_ISDIR(entry.st_mode):
+                type_str = "📁 Dossier"
+            st.write(f" - {entry.filename} → {type_str}")
 
-        # Essayer différentes syntaxes pour accéder au dossier
-        ok = False
-        for path in [dir_remote, f"./{dir_remote}", f"/{dir_remote}"]:
-            try:
-                sftp.chdir(path)
-                st.write(f"✅ Accès au dossier {path}")
-                dir_remote = path
-                ok = True
-                break
-            except IOError:
-                st.write(f"❌ Impossible avec {path}")
+        # Vérifier si dir_remote est bien un dossier
+        try:
+            attrs = sftp.stat(dir_remote)
+            if not stat.S_ISDIR(attrs.st_mode):
+                return False, f"'{dir_remote}' existe mais n’est pas un dossier."
+        except Exception as e:
+            return False, f"'{dir_remote}' introuvable : {e}"
 
-        if not ok:
-            return False, f"Impossible d'accéder au dossier {dir_remote}"
+        sftp.chdir(dir_remote)
 
-        # Upload
         for nom, buffer in fichiers:
             buffer.seek(0)
             remote_path = f"{dir_remote}/{nom}"
@@ -148,10 +144,9 @@ def upload_sftp(fichiers, sftp_cfg):
 
         sftp.close()
         transport.close()
-        return True, f"{len(fichiers)} fichier(s) envoyé(s) en SFTP vers {dir_remote}"
+        return True, f"{len(fichiers)} fichier(s) envoyé(s) vers {dir_remote}"
     except Exception as e:
         return False, str(e)
-
 
 # =============================
 # Interface Streamlit

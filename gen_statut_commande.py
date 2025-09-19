@@ -126,6 +126,10 @@ def upload_ftp(fichiers, ftp_cfg, timeout=20):
     pwd  = ftp_cfg.get("pass")
     dir_remote = ftp_cfg.get("dir", "refonteTest")
 
+# Debug : afficher ce qui est lu dans secrets
+st.write("🔑 FTP config lue:", {"host": host, "user": user, "pass": "***", "dir": dir_remote})
+
+
     if not host or not user or not pwd:
         return False, "Identifiants FTP manquants (vérifier st.secrets ou variables d'environnement)."
 

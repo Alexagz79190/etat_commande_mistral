@@ -61,6 +61,8 @@ TRANSPORTEURS = [
 # Fonction génération fichiers commande
 # =============================
 def generer_csv_par_commande(df, etats, transporteurs, mixte, nb_max=None):
+    import re
+
     no_commande_base = 1873036
     num_commande = no_commande_base
     fichiers = []
@@ -71,11 +73,33 @@ def generer_csv_par_commande(df, etats, transporteurs, mixte, nb_max=None):
         df = df[df["Code Mistral"].notna()]
         df = df[df["Code Mistral"].astype(str).str.strip() != ""]
 
+    # Petites helpers
+    def split_strip(x):
+        # split par | puis trim des espaces
+        if pd.isna(x):
+            return []
+        return [p.strip() for p in str(x).split("|")]
+
+    def at(lst, i):
+        return lst[i] if i < len(lst) else ""
+
+    def to_float_safe(val):
+        s = str(val).strip().replace("\xa0", "").replace(" ", "")
+        s = s.replace(",", ".")
+        return float(s)
+
+    def format_price(val):
+        try:
+            # si tes prix sont déjà en euros, supprime le /100
+            return str(round(to_float_safe(val) / 100, 2)).replace(".", ",")
+        except Exception:
+            return ""
+
     for idx, ligne in df.iterrows():
         if nb_max and commandes_generees >= nb_max:
             break
 
-        # État
+        # État (mixte ou fixe)
         etat = random.choice(etats) if mixte else etats[0]
 
         # Transporteur (tourniquet)
@@ -83,42 +107,44 @@ def generer_csv_par_commande(df, etats, transporteurs, mixte, nb_max=None):
         transporteur_id = t["id"]
         tracking_default = t["tracking"]
 
-        # Découpage des champs PIPE
-        details = str(ligne.get("Reference", "")).split("|")
-        qtes    = str(ligne.get("Quantité", "")).split("|")
-        pv      = str(ligne.get("prixUnitHt", "")).split("|")
-        pa      = str(ligne.get("prixAchatHt", "")).split("|")
-        codes   = str(ligne.get("Code Mistral", "")).split("|")
-        libs    = str(ligne.get("Libellé", "")).split("|")
+        # Découpage des champs PIPE + trim
+        details = split_strip(ligne.get("Reference", ""))
+        qtes    = split_strip(ligne.get("Quantité", ""))
+        pv      = split_strip(ligne.get("prixUnitHt", ""))
+        pa      = split_strip(ligne.get("prixAchatHt", ""))
+        codes   = split_strip(ligne.get("Code Mistral", ""))
+        libs    = split_strip(ligne.get("Libellé", ""))
+
+        # on itère sur la longueur MAX de tous les champs
+        n = max(len(details), len(qtes), len(pv), len(pa), len(codes), len(libs)) if any([details, qtes, pv, pa, codes, libs]) else 0
 
         lignes_export = []
         no_ligne = 1
 
-        for i in range(len(details)):
-            if i >= len(codes) or not str(codes[i]).strip():
+        for i in range(n):
+            code_i = at(codes, i)
+            if not str(code_i).strip():
+                # pas de code = pas de ligne export
                 continue
 
             tracking = tracking_default if etat == "En cours de livraison" else ""
 
-            def format_price(val):
-                try:
-                    return str(round(float(val) / 100, 2)).replace(".", ",")
-                except:
-                    return ""
+            pv_val = format_price(at(pv, i)) if at(pv, i) != "" else ""
+            pa_val = format_price(at(pa, i)) if at(pa, i) != "" else ""
 
-            pv_val = format_price(pv[i]) if i < len(pv) else ""
-            pa_val = format_price(pa[i]) if i < len(pa) else ""
+            # si Reference n'a qu'une seule valeur, on la réutilise
+            no_transaction = at(details, i) or (details[0] if details else str(idx))
 
             lignes_export.append({
-                "No Transaction": details[i] if i < len(details) else "",
+                "No Transaction": no_transaction,
                 "No Ligne": no_ligne,
                 "No Commande Client": num_commande,
                 "Etat": etat,
                 "No Tracking": tracking,
                 "No Transporteur": transporteur_id,
-                "Code article": codes[i],
-                "Désignation": libs[i] if i < len(libs) else "",
-                "Quantité": qtes[i] if i < len(qtes) else "",
+                "Code article": code_i,
+                "Désignation": at(libs, i),
+                "Quantité": at(qtes, i),
                 "PV net": pv_val,
                 "PA net": pa_val
             })
@@ -132,21 +158,23 @@ def generer_csv_par_commande(df, etats, transporteurs, mixte, nb_max=None):
         # Nom fichier
         horodatage = datetime.now().strftime("%Y%m%d%H%M%S")
         ref_for_name = details[0] if details else str(idx)
+        ref_for_name = re.sub(r'[^A-Za-z0-9._-]+', '_', ref_for_name)  # nettoyage nom
         fichier_nom = f"OU_EXP_{ref_for_name}_{horodatage}.csv"
 
         # Buffer mémoire
         buffer = BytesIO()
-        df_export = df_export.applymap(lambda x: str(x).encode("latin-1", errors="replace").decode("latin-1"))
+        df_export = df_export.astype(str)
         df_export.to_csv(buffer, sep=";", index=False, encoding="latin-1")
         buffer.seek(0)
 
         fichiers.append((fichier_nom, buffer))
         commandes_generees += 1
 
-        if etat == "En cours de livraison":
-            num_commande += 1
+        # Incrément du numéro de commande à chaque commande générée
+        num_commande += 1
 
     return fichiers
+
 
 # =============================
 # Fonction upload SFTP

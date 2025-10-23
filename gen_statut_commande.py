@@ -1,44 +1,43 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Oct 23 16:34:05 2025
+
+@author: mathon.alexis
+"""
+
 # app.py
 # -*- coding: utf-8 -*-
 """
 App Streamlit : simulation export commande BOSS + envoi SFTP
-- Modes d'état : Unique / Cyclique / Aléatoire par ligne
-- Bouton pour lancer la cron (URL fournie)
-- Gestion de ligne partielle (duplication des lignes avec quantités/états distincts)
 """
 
-import os
-import re
-import time
-import random
-import requests
 import streamlit as st
 import pandas as pd
-from io import BytesIO
+import random
 from datetime import datetime
+from io import BytesIO
 import paramiko
+import os
+import requests
 
 # =============================
-# Config SFTP (secrets ou env)
+# Charger les secrets SFTP
 # =============================
 def get_sftp_config():
-    """Récupère la config SFTP depuis st.secrets['sftp'] ou variables d'environnement."""
     try:
         sftp_conf = st.secrets["sftp"]
         return {
             "host": sftp_conf.get("host"),
             "user": sftp_conf.get("user"),
             "pass": sftp_conf.get("pass"),
-            "dir": sftp_conf.get("dir", "refonteTest"),
-            "port": int(sftp_conf.get("port", 22)),
+            "dir": sftp_conf.get("dir", "refonteTest")
         }
     except Exception:
         return {
             "host": os.environ.get("SFTP_HOST"),
             "user": os.environ.get("SFTP_USER"),
             "pass": os.environ.get("SFTP_PASS"),
-            "dir": os.environ.get("SFTP_DIR", "refonteTest"),
-            "port": int(os.environ.get("SFTP_PORT", 22)),
+            "dir": os.environ.get("SFTP_DIR", "refonteTest")
         }
 
 SFTP_CFG = get_sftp_config()
@@ -53,7 +52,7 @@ ETATS = [
     "En cours de reapprovisionnement",
     "En cours de traitement",
     "En cours de livraison",
-    "En traitement",
+    "En traitement"
 ]
 
 # =============================
@@ -67,7 +66,7 @@ TRANSPORTEURS = [
 ]
 
 # =============================
-# URL CRON à lancer
+# Cron
 # =============================
 CRON_URL = (
     "https://admin-refonte.agrizone.net/?crudAction=launch&"
@@ -78,37 +77,34 @@ CRON_URL = (
     "message=App%5CMessageHandler%5CScheduler%5CMistralRecupCommandeHandler"
 )
 
+
 # =============================
-# Génération CSV par commande
+# Fonction génération fichiers commande
 # =============================
 def generer_csv_par_commande(
-    df: pd.DataFrame,
+    df,
     etats: list,
     transporteurs: list,
     mode_etat: str,             # "unique" | "cyclique" | "aleatoire"
     nb_max=None,
-    partiel_active: bool = False,
-    partiel_qte: int = 1,
-    partiel_etat_a: str | None = None,
-    partiel_etat_b: str | None = None,
+    partiel_active=False,       # True/False
+    partiel_qte=1,              # quantité pour la ligne partielle
+    partiel_etat_a=None,        # état pour la partie partielle
+    partiel_etat_b=None         # état pour le reliquat
 ):
-    """
-    Construit des CSV d'export par commande :
-    - Découpe des colonnes pipe ("|")
-    - Attribution d'état selon le mode paramétré
-    - Gestion de ligne partielle si activée
-    - Retourne une liste (nom_fichier, buffer_csv)
-    """
+    import re
+
     no_commande_base = 1873036
     num_commande = no_commande_base
     fichiers = []
     commandes_generees = 0
 
-    # Filtrer les lignes sans Code Mistral
+    # Filtre "Code Mistral" vide
     if "Code Mistral" in df.columns:
         df = df[df["Code Mistral"].notna()]
         df = df[df["Code Mistral"].astype(str).str.strip() != ""]
 
+    # Helpers
     def split_strip(x):
         if pd.isna(x):
             return []
@@ -132,4 +128,303 @@ def generer_csv_par_commande(
 
     def to_int_safe(val):
         try:
-            return int(float(str(val).replace(",", ".").strip
+            return int(float(str(val).replace(",", ".").strip()))
+        except Exception:
+            return 0
+
+    # Sélection de l'état selon le mode choisi
+    line_counter = 0
+    def pick_etat():
+        nonlocal line_counter
+        if not etats:
+            return ""
+        if mode_etat == "unique":
+            return etats[0]
+        elif mode_etat == "cyclique":
+            e = etats[line_counter % len(etats)]
+            line_counter += 1
+            return e
+        else:  # "aleatoire"
+            return random.choice(etats)
+
+    for idx, ligne in df.iterrows():
+        if nb_max and commandes_generees >= nb_max:
+            break
+
+        # Tourniquet transporteur
+        t = transporteurs[commandes_generees % len(transporteurs)]
+        transporteur_id = t["id"]
+        tracking_default = t["tracking"]
+
+        # Découpe des champs (pipe)
+        details = split_strip(ligne.get("Reference", ""))
+        qtes    = split_strip(ligne.get("Quantité", ""))
+        pv      = split_strip(ligne.get("prixUnitHt", ""))
+        pa      = split_strip(ligne.get("prixAchatHt", ""))
+        codes   = split_strip(ligne.get("Code Mistral", ""))
+        libs    = split_strip(ligne.get("Libellé", ""))
+
+        n = max(len(details), len(qtes), len(pv), len(pa), len(codes), len(libs)) if any([details, qtes, pv, pa, codes, libs]) else 0
+
+        lignes_export = []
+        no_ligne = 1
+
+        for i in range(n):
+            code_i = at(codes, i)
+            if not str(code_i).strip():
+                continue
+
+            # Quantité d'origine
+            qte_full = to_int_safe(at(qtes, i)) if at(qtes, i) != "" else 0
+            if qte_full <= 0:
+                qte_full = 1  # fallback
+
+            # Prix
+            pv_val = format_price(at(pv, i)) if at(pv, i) != "" else ""
+            pa_val = format_price(at(pa, i)) if at(pa, i) != "" else ""
+
+            # Référence transaction pour nommage
+            no_transaction = at(details, i) or (details[0] if details else str(idx))
+
+            # Fonction pour créer une ligne (avec tracking si "En cours de livraison")
+            def build_line(_etat, _qte):
+                tracking = tracking_default if _etat == "En cours de livraison" else ""
+                return {
+                    "No Transaction": no_transaction,
+                    "No Ligne": _next_no_ligne(),
+                    "No Commande Client": num_commande,
+                    "Etat": _etat,
+                    "No Tracking": tracking,
+                    "No Transporteur": transporteur_id,
+                    "Code article": code_i,
+                    "Désignation": at(libs, i),
+                    "Quantité": str(_qte),
+                    "PV net": pv_val,
+                    "PA net": pa_val
+                }
+
+            # Compteur No Ligne
+            def _next_no_ligne():
+                nonlocal no_ligne
+                cur = no_ligne
+                no_ligne += 1
+                return cur
+
+            # === LOGIQUE PARTIELLE ===
+            if partiel_active and qte_full > partiel_qte:
+                # États dédiés pour partiel/reliquat (sinon on pioche via mode)
+                etat_a = partiel_etat_a or pick_etat()
+                etat_b = partiel_etat_b or pick_etat()
+                qte_a = partiel_qte
+                qte_b = qte_full - partiel_qte
+
+                lignes_export.append(build_line(etat_a, qte_a))
+                lignes_export.append(build_line(etat_b, qte_b))
+            else:
+                etat = pick_etat()
+                lignes_export.append(build_line(etat, qte_full))
+
+        if not lignes_export:
+            continue
+
+        df_export = pd.DataFrame(lignes_export)
+
+        # Nom de fichier
+        horodatage = datetime.now().strftime("%Y%m%d%H%M%S")
+        ref_for_name = details[0] if details else str(idx)
+        ref_for_name = re.sub(r'[^A-Za-z0-9._-]+', '_', ref_for_name)
+        fichier_nom = f"OU_EXP_{ref_for_name}_{horodatage}.csv"
+
+        # Buffer
+        buffer = BytesIO()
+        df_export = df_export.astype(str)
+        df_export.to_csv(buffer, sep=";", index=False, encoding="latin-1")
+        buffer.seek(0)
+
+        fichiers.append((fichier_nom, buffer))
+        commandes_generees += 1
+        num_commande += 1
+
+    return fichiers
+
+
+# =============================
+# Fonction upload SFTP
+# =============================
+def upload_sftp(fichiers, sftp_cfg):
+    host = sftp_cfg.get("host")
+    user = sftp_cfg.get("user")
+    pwd  = sftp_cfg.get("pass")
+    dir_remote = sftp_cfg.get("dir", "refonteTest")
+
+    if not host or not user or not pwd:
+        return False, "Identifiants SFTP manquants"
+
+    try:
+        transport = paramiko.Transport((host, 22))
+        transport.connect(username=user, password=pwd)
+        sftp = paramiko.SFTPClient.from_transport(transport)
+
+        for nom, buffer in fichiers:
+            buffer.seek(0)
+            remote_path = f"{dir_remote}/{nom}"
+            sftp.putfo(buffer, remote_path)
+            st.write(f"✅ Upload {remote_path}")
+
+        sftp.close()
+        transport.close()
+        return True, f"{len(fichiers)} fichier(s) envoyé(s) en SFTP vers {dir_remote}"
+    except Exception as e:
+        return False, str(e)
+
+# =============================
+# Interface Streamlit
+# =============================
+st.title("📦 Simulation export commande BOSS + Envoi SFTP")
+
+# ── Bouton CRON en haut de page
+if st.button("🚀 Lancer la cron maintenant"):
+    try:
+        r = requests.get(CRON_URL, timeout=20)
+        ok = 200 <= r.status_code < 300
+        if ok:
+            st.success(f"Cron lancée (HTTP {r.status_code})")
+        else:
+            st.warning(f"Cron appelée mais réponse HTTP {r.status_code}")
+        st.code((r.text or "")[:2000], language="bash")
+    except Exception as e:
+        st.error(f"Erreur lors de l’appel de la cron : {e}")
+
+st.markdown("""
+### 📑 Fichier source attendu (Export Commande → BOSS)
+Filtrer les commandes **Date de validation** pour ne pas avoir d’anciennes commandes  
+et choisir les états : *Commande validée* - *Commande en préparation*  
+
+| Champ source       | Bloc |
+|--------------------|-------------|
+| **Reference**      | Commande |
+| **Quantité**       | Détail de commande - détails |
+| **prixUnitHt**     | Détail de commande - détails |
+| **prixAchatHt**    | Détail de commande - détails |
+| **Code Mistral**   | Détail de commande - détails |
+| **Libellé**        | Détail de commande - détails |
+""")
+
+# Upload fichier source
+fichier_source = st.file_uploader("📂 Charger le fichier CSV source", type=["csv"])
+
+if fichier_source:
+    try:
+        fichier_source.seek(0)  # 🔑 reset curseur
+        df_preview = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
+        st.markdown("### 👀 Aperçu du fichier source (5 premières lignes)")
+        st.dataframe(df_preview.head())
+    except Exception as e:
+        st.error(f"Erreur lecture CSV: {e}")
+
+# Options — États
+etats_selectionnes = st.multiselect(
+    "📌 Choisir les états de commande :",
+    ETATS,
+    default=[ETATS[0]]
+)
+
+# Mode d’attribution d’état (nouveau)
+mode_etat_label = st.radio(
+    "🎛️ Mode d’attribution des états :",
+    ["Unique (tout pareil)", "Cyclique (1,2,3…)", "Aléatoire par ligne"],
+    index=0,
+    help=(
+        "• Unique : toutes les lignes utilisent le premier état sélectionné\n"
+        "• Cyclique : alterne les états sélectionnés ligne par ligne\n"
+        "• Aléatoire : tire un état au hasard pour chaque ligne"
+    )
+)
+mode_etat = {
+    "Unique (tout pareil)": "unique",
+    "Cyclique (1,2,3…)": "cyclique",
+    "Aléatoire par ligne": "aleatoire"
+}[mode_etat_label]
+
+# Gestion de lignes partielles (nouveau)
+with st.expander("✂️ Gestion de ligne partielle"):
+    partiel_active = st.checkbox("Activer la gestion de ligne partielle", value=False,
+                                 help="Duplique la ligne en 2 : quantité partielle (A) et reliquat (B).")
+    partiel_qte = 1
+    etat_partiel_a = None
+    etat_partiel_b = None
+    if partiel_active:
+        partiel_qte = st.number_input("Quantité pour la partie partielle (A)",
+                                      min_value=1, value=1, step=1)
+        if etats_selectionnes:
+            etat_partiel_a = st.selectbox("État pour la partie partielle (A)",
+                                          etats_selectionnes, index=0)
+            idx_b = 1 if len(etats_selectionnes) > 1 else 0
+            etat_partiel_b = st.selectbox("État pour le reliquat (B)",
+                                          etats_selectionnes, index=idx_b)
+        else:
+            st.warning("Sélectionne au moins un état pour configurer la ligne partielle.")
+
+# Transporteurs & autres options
+transporteurs_selectionnes = st.multiselect(
+    "🚚 Choisir les transporteurs :",
+    [t["nom"] for t in TRANSPORTEURS]
+)
+nb_max = st.number_input(
+    "🔢 Nombre max de commandes (0 = toutes)",
+    min_value=0, value=0, step=1
+)
+
+# Bouton principal
+if st.button("▶️ Générer et envoyer sur SFTP"):
+    if not fichier_source:
+        st.error("Merci de charger le fichier source.")
+    elif not etats_selectionnes:
+        st.error("Merci de sélectionner au moins un état.")
+    elif not transporteurs_selectionnes:
+        st.error("Merci de choisir au moins un transporteur.")
+    else:
+        # Lecture effective du CSV source
+        try:
+            fichier_source.seek(0)  # 🔑 reset avant 2e lecture
+            df = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
+        except Exception as e:
+            st.error(f"Erreur lecture CSV: {e}")
+            st.stop()
+
+        # Transporteurs retenus
+        transporteurs_utilises = [t for t in TRANSPORTEURS if t["nom"] in transporteurs_selectionnes]
+        if not transporteurs_utilises:
+            st.error("Aucun transporteur valide après filtrage.")
+            st.stop()
+
+        # Génération des fichiers (nouvelle signature)
+        fichiers = generer_csv_par_commande(
+            df=df,
+            etats=etats_selectionnes,
+            transporteurs=transporteurs_utilises,
+            mode_etat=mode_etat,
+            nb_max=nb_max if nb_max > 0 else None,
+            partiel_active=partiel_active,
+            partiel_qte=partiel_qte,
+            partiel_etat_a=etat_partiel_a,
+            partiel_etat_b=etat_partiel_b
+        )
+
+        if not fichiers:
+            st.warning("Aucune ligne valide à exporter (vérifie le fichier source).")
+            st.stop()
+
+        st.info(f"{len(fichiers)} fichier(s) généré(s), tentative d'envoi SFTP...")
+
+        ok, msg = upload_sftp(fichiers, SFTP_CFG)
+        if ok:
+            st.success(msg)
+            # Propose le téléchargement du premier fichier généré
+            try:
+                st.download_button("⬇️ Télécharger le 1er fichier généré",
+                                   fichiers[0][1], file_name=fichiers[0][0])
+            except Exception:
+                st.info("Les fichiers ont été envoyés en SFTP. Aucun téléchargement local n'a été créé.")
+        else:
+            st.error("Erreur SFTP : " + msg)

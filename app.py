@@ -11,6 +11,15 @@ Created on Thu Oct 23 16:34:05 2025
 App Streamlit : simulation export commande BOSS + envoi SFTP
 """
 
+import os, pathlib, streamlit as st
+root = pathlib.Path(__file__).parent
+st.sidebar.write("📁 Dossier courant:", str(root))
+st.sidebar.write("📂 pages/ existe :", (root / "pages").exists())
+st.sidebar.write("📄 Fichiers dans pages/:", os.listdir(root / "pages") if (root / "pages").exists() else "—")
+
+
+
+
 import streamlit as st
 import pandas as pd
 import random

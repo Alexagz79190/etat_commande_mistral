@@ -12,14 +12,6 @@ App Streamlit : simulation export commande BOSS + envoi SFTP
 """
 
 import streamlit as st
-
-st.set_page_config(
-    page_title="📦 Envoi états de commande",
-    page_icon="📤",
-    layout="wide"
-)
-
-import streamlit as st
 import pandas as pd
 import random
 from datetime import datetime
@@ -27,6 +19,16 @@ from io import BytesIO
 import paramiko
 import os
 import requests
+
+
+st.set_page_config(
+    page_title="📦 Envoi états de commande",
+    page_icon="📤",
+    layout="wide"
+)
+
+st.title("📦 Simulation export commande BOSS + Envoi SFTP")
+
 
 # =============================
 # Charger les secrets SFTP

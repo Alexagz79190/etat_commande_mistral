@@ -282,18 +282,13 @@ def upload_sftp(fichiers, sftp_cfg):
 # =============================
 st.title("📦 Simulation export commande BOSS + Envoi SFTP")
 
-# ── Bouton CRON en haut de page
-if st.button("🚀 Lancer la cron maintenant"):
-    try:
-        r = requests.get(CRON_URL, timeout=20)
-        ok = 200 <= r.status_code < 300
-        if ok:
-            st.success(f"Cron lancée (HTTP {r.status_code})")
-        else:
-            st.warning(f"Cron appelée mais réponse HTTP {r.status_code}")
-        st.code((r.text or "")[:2000], language="bash")
-    except Exception as e:
-        st.error(f"Erreur lors de l’appel de la cron : {e}")
+# État initial (évite NameError)
+if "sftp_ok" not in st.session_state:
+    st.session_state.sftp_ok = False
+if "sftp_msg" not in st.session_state:
+    st.session_state.sftp_msg = ""
+if "dernier_fichier" not in st.session_state:
+    st.session_state.dernier_fichier = None  # (name, BytesIO)
 
 st.markdown("""
 ### 📑 Fichier source attendu (Export Commande → BOSS)
@@ -312,7 +307,6 @@ et choisir les états : *Commande validée* - *Commande en préparation*
 
 # Upload fichier source
 fichier_source = st.file_uploader("📂 Charger le fichier CSV source", type=["csv"])
-
 if fichier_source:
     try:
         fichier_source.seek(0)  # 🔑 reset curseur
@@ -323,22 +317,13 @@ if fichier_source:
         st.error(f"Erreur lecture CSV: {e}")
 
 # Options — États
-etats_selectionnes = st.multiselect(
-    "📌 Choisir les états de commande :",
-    ETATS,
-    default=[ETATS[0]]
-)
+etats_selectionnes = st.multiselect("📌 Choisir les états de commande :", ETATS, default=[ETATS[0]])
 
-# Mode d’attribution d’état (nouveau)
+# Mode d’attribution d’état
 mode_etat_label = st.radio(
     "🎛️ Mode d’attribution des états :",
     ["Unique (tout pareil)", "Cyclique (1,2,3…)", "Aléatoire par ligne"],
-    index=0,
-    help=(
-        "• Unique : toutes les lignes utilisent le premier état sélectionné\n"
-        "• Cyclique : alterne les états sélectionnés ligne par ligne\n"
-        "• Aléatoire : tire un état au hasard pour chaque ligne"
-    )
+    index=0
 )
 mode_etat = {
     "Unique (tout pareil)": "unique",
@@ -346,10 +331,9 @@ mode_etat = {
     "Aléatoire par ligne": "aleatoire"
 }[mode_etat_label]
 
-# Gestion de lignes partielles (nouveau)
+# Gestion des lignes partielles
 with st.expander("✂️ Gestion de ligne partielle"):
-    partiel_active = st.checkbox("Activer la gestion de ligne partielle", value=False,
-                                 help="Duplique la ligne en 2 : quantité partielle (A) et reliquat (B).")
+    partiel_active = st.checkbox("Activer la gestion de ligne partielle", value=False)
     partiel_qte = 1
     etat_partiel_a = None
     etat_partiel_b = None
@@ -358,94 +342,109 @@ with st.expander("✂️ Gestion de ligne partielle"):
                                       min_value=1, value=1, step=1)
         if etats_selectionnes:
             etat_partiel_a = st.selectbox("État pour la partie partielle (A)",
-                                          etats_selectionnes, index=0)
+                                          etats_selectionnes, index=0, key="etat_a")
             idx_b = 1 if len(etats_selectionnes) > 1 else 0
             etat_partiel_b = st.selectbox("État pour le reliquat (B)",
-                                          etats_selectionnes, index=idx_b)
+                                          etats_selectionnes, index=idx_b, key="etat_b")
         else:
             st.warning("Sélectionne au moins un état pour configurer la ligne partielle.")
 
-# Transporteurs & autres options
+# Transporteurs & limites
 transporteurs_selectionnes = st.multiselect(
-    "🚚 Choisir les transporteurs :",
-    [t["nom"] for t in TRANSPORTEURS]
+    "🚚 Choisir les transporteurs :", [t["nom"] for t in TRANSPORTEURS]
 )
-nb_max = st.number_input(
-    "🔢 Nombre max de commandes (0 = toutes)",
-    min_value=0, value=0, step=1
-)
+nb_max = st.number_input("🔢 Nombre max de commandes (0 = toutes)", min_value=0, value=0, step=1)
 
-# Bouton principal
-if st.button("▶️ Générer et envoyer sur SFTP"):
+# Bouton principal : Générer + SFTP
+if st.button("▶️ Générer et envoyer sur SFTP", type="primary"):
+    # Reset état d’exécution précédent
+    st.session_state.sftp_ok = False
+    st.session_state.sftp_msg = ""
+    st.session_state.dernier_fichier = None
+
+    # Validations
     if not fichier_source:
         st.error("Merci de charger le fichier source.")
-    elif not etats_selectionnes:
+        st.stop()
+    if not etats_selectionnes:
         st.error("Merci de sélectionner au moins un état.")
-    elif not transporteurs_selectionnes:
+        st.stop()
+    if not transporteurs_selectionnes:
         st.error("Merci de choisir au moins un transporteur.")
-    else:
-        # Lecture effective du CSV source
-        try:
-            fichier_source.seek(0)  # 🔑 reset avant 2e lecture
-            df = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
-        except Exception as e:
-            st.error(f"Erreur lecture CSV: {e}")
-            st.stop()
+        st.stop()
 
-        # Transporteurs retenus
-        transporteurs_utilises = [t for t in TRANSPORTEURS if t["nom"] in transporteurs_selectionnes]
-        if not transporteurs_utilises:
-            st.error("Aucun transporteur valide après filtrage.")
-            st.stop()
+    # Lecture effective du CSV
+    try:
+        fichier_source.seek(0)
+        df = pd.read_csv(fichier_source, sep=",", encoding="utf-8")
+    except Exception as e:
+        st.error(f"Erreur lecture CSV: {e}")
+        st.stop()
 
-        # Génération des fichiers (nouvelle signature)
-        fichiers = generer_csv_par_commande(
-            df=df,
-            etats=etats_selectionnes,
-            transporteurs=transporteurs_utilises,
-            mode_etat=mode_etat,
-            nb_max=nb_max if nb_max > 0 else None,
-            partiel_active=partiel_active,
-            partiel_qte=partiel_qte,
-            partiel_etat_a=etat_partiel_a,
-            partiel_etat_b=etat_partiel_b
-        )
+    # Transporteurs retenus
+    transporteurs_utilises = [t for t in TRANSPORTEURS if t["nom"] in transporteurs_selectionnes]
+    if not transporteurs_utilises:
+        st.error("Aucun transporteur valide après filtrage.")
+        st.stop()
 
-        if not fichiers:
-            st.warning("Aucune ligne valide à exporter (vérifie le fichier source).")
-            st.stop()
-
-        st.info(f"{len(fichiers)} fichier(s) généré(s), tentative d'envoi SFTP...")
-
-        ok, msg = upload_sftp(fichiers, SFTP_CFG)
-if ok:
-    st.success(msg)
-
-    # Bouton de téléchargement du 1er fichier
-    st.download_button(
-        "⬇️ Télécharger le 1er fichier généré",
-        fichiers[0][1],
-        file_name=fichiers[0][0],
-        key="download_1"
+    # Génération
+    fichiers = generer_csv_par_commande(
+        df=df,
+        etats=etats_selectionnes,
+        transporteurs=transporteurs_utilises,
+        mode_etat=mode_etat,
+        nb_max=nb_max if nb_max > 0 else None,
+        partiel_active=partiel_active,
+        partiel_qte=partiel_qte,
+        partiel_etat_a=etat_partiel_a,
+        partiel_etat_b=etat_partiel_b
     )
 
-    # Bouton "Lancer la cron" (affiché uniquement après SFTP OK)
+    if not fichiers:
+        st.warning("Aucune ligne valide à exporter (vérifie le fichier source).")
+        st.stop()
+
+    st.info(f"{len(fichiers)} fichier(s) généré(s), tentative d'envoi SFTP...")
+
+    # Envoi SFTP
+    ok, msg = upload_sftp(fichiers, SFTP_CFG)  # <- ok et msg TOUJOURS définis ici
+    st.session_state.sftp_ok = bool(ok)
+    st.session_state.sftp_msg = msg or ""
+    # Mémoriser le 1er fichier pour le téléchargement
+    try:
+        st.session_state.dernier_fichier = fichiers[0]
+    except Exception:
+        st.session_state.dernier_fichier = None
+
+    # Feedback immédiat
+    if st.session_state.sftp_ok:
+        st.success(st.session_state.sftp_msg)
+    else:
+        st.error("❌ Erreur SFTP : " + st.session_state.sftp_msg)
+
+# ---- Zone de sortie (bas de page) ----
+# Bouton de téléchargement (si un fichier est dispo)
+if st.session_state.dernier_fichier is not None:
+    nom, buffer = st.session_state.dernier_fichier
+    try:
+        st.download_button("⬇️ Télécharger le 1er fichier généré", buffer, file_name=nom, key="download_1")
+    except Exception:
+        st.info("Les fichiers ont été envoyés en SFTP. Aucun téléchargement local n'a été créé.")
+
+# Bouton CRON (uniquement si SFTP OK) — affiché APRÈS le téléchargement
+if st.session_state.sftp_ok:
     st.markdown("---")
-    st.markdown("### 🕐 Étape suivante : Lancer la cron")
-
+    st.markdown("### 🕐 Étape suivante")
     cron_clicked = st.button("✅ Lancer la cron maintenant", key="cron_button")
-
     if cron_clicked:
         try:
             r = requests.get(CRON_URL, timeout=20)
-            ok = 200 <= r.status_code < 300
-            if ok:
+            ok_cron = 200 <= r.status_code < 300
+            if ok_cron:
                 st.success(f"Cron lancée avec succès (HTTP {r.status_code})")
             else:
                 st.warning(f"Cron appelée mais réponse HTTP {r.status_code}")
-            st.code((r.text or '')[:2000], language="bash")
+            st.code((r.text or "")[:2000], language="bash")
         except Exception as e:
             st.error(f"Erreur lors de l’appel de la cron : {e}")
 
-else:
-    st.error("❌ Erreur SFTP : " + msg)

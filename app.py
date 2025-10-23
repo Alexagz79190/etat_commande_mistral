@@ -6,5 +6,8 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📦 Envoi états de commande")
-st.write("Bienvenue dans la page principale.")
+pg_envoi_cmd = st.Page("1_📦 Envoi états de commande.py", title="📦 Envoi états de commande")
+pg_facture   = st.Page("2_📑 Envoi facture.py",           title="📑 Envoi facture")
+
+nav = st.navigation([pg_envoi_cmd, pg_facture])
+nav.run()

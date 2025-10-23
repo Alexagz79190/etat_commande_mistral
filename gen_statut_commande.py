@@ -418,13 +418,34 @@ if st.button("▶️ Générer et envoyer sur SFTP"):
         st.info(f"{len(fichiers)} fichier(s) généré(s), tentative d'envoi SFTP...")
 
         ok, msg = upload_sftp(fichiers, SFTP_CFG)
-        if ok:
-            st.success(msg)
-            # Propose le téléchargement du premier fichier généré
-            try:
-                st.download_button("⬇️ Télécharger le 1er fichier généré",
-                                   fichiers[0][1], file_name=fichiers[0][0])
-            except Exception:
-                st.info("Les fichiers ont été envoyés en SFTP. Aucun téléchargement local n'a été créé.")
-        else:
-            st.error("Erreur SFTP : " + msg)
+if ok:
+    st.success(msg)
+
+    # Bouton de téléchargement du 1er fichier
+    st.download_button(
+        "⬇️ Télécharger le 1er fichier généré",
+        fichiers[0][1],
+        file_name=fichiers[0][0],
+        key="download_1"
+    )
+
+    # Bouton "Lancer la cron" (affiché uniquement après SFTP OK)
+    st.markdown("---")
+    st.markdown("### 🕐 Étape suivante : Lancer la cron")
+
+    cron_clicked = st.button("✅ Lancer la cron maintenant", key="cron_button")
+
+    if cron_clicked:
+        try:
+            r = requests.get(CRON_URL, timeout=20)
+            ok = 200 <= r.status_code < 300
+            if ok:
+                st.success(f"Cron lancée avec succès (HTTP {r.status_code})")
+            else:
+                st.warning(f"Cron appelée mais réponse HTTP {r.status_code}")
+            st.code((r.text or '')[:2000], language="bash")
+        except Exception as e:
+            st.error(f"Erreur lors de l’appel de la cron : {e}")
+
+else:
+    st.error("❌ Erreur SFTP : " + msg)

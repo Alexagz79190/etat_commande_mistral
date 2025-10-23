@@ -427,7 +427,12 @@ if st.button("▶️ Générer et envoyer sur SFTP", type="primary"):
 if st.session_state.dernier_fichier is not None:
     nom, buffer = st.session_state.dernier_fichier
     try:
-        st.download_button("⬇️ Télécharger le 1er fichier généré", buffer, file_name=nom, key="download_1")
+        st.download_button(
+            "⬇️ Télécharger le 1er fichier généré",
+            buffer,
+            file_name=nom,
+            key="download_1"
+        )
     except Exception:
         st.info("Les fichiers ont été envoyés en SFTP. Aucun téléchargement local n'a été créé.")
 
@@ -435,16 +440,10 @@ if st.session_state.dernier_fichier is not None:
 if st.session_state.sftp_ok:
     st.markdown("---")
     st.markdown("### 🕐 Étape suivante")
-    cron_clicked = st.button("✅ Lancer la cron maintenant", key="cron_button")
-    if cron_clicked:
-        try:
-            r = requests.get(CRON_URL, timeout=20)
-            ok_cron = 200 <= r.status_code < 300
-            if ok_cron:
-                st.success(f"Cron lancée avec succès (HTTP {r.status_code})")
-            else:
-                st.warning(f"Cron appelée mais réponse HTTP {r.status_code}")
-            st.code((r.text or "")[:2000], language="bash")
-        except Exception as e:
-            st.error(f"Erreur lors de l’appel de la cron : {e}")
 
+    # ✅ Bouton-lien vers la page cron (connexion LDAP)
+    st.link_button(
+        "✅ Ouvrir la page cron (login LDAP)",
+        CRON_URL,
+        use_container_width=True
+    )

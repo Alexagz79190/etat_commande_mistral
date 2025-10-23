@@ -443,7 +443,7 @@ if st.session_state.sftp_ok:
 
     # ✅ Bouton-lien vers la page cron (connexion LDAP)
     st.link_button(
-        "✅ Ouvrir la page cron (login LDAP)",
+        "✅ Lancer la CRON MistralRecupCommande",
         CRON_URL,
         use_container_width=True
     )

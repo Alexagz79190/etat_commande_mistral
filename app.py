@@ -20,14 +20,10 @@ import paramiko
 import os
 import requests
 
+with st.sidebar:
+    st.markdown("## 📦 Envoi états de commande")
+    st.markdown("---")
 
-st.set_page_config(
-    page_title="📦 Envoi états de commande",
-    page_icon="📤",
-    layout="wide"
-)
-
-st.title("📦 Simulation export commande BOSS + Envoi SFTP")
 
 
 # =============================

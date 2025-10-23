@@ -20,11 +20,6 @@ import paramiko
 import os
 import requests
 
-with st.sidebar:
-    st.markdown("## 📦 Envoi états de commande")
-    st.markdown("---")
-
-
 
 # =============================
 # Charger les secrets SFTP

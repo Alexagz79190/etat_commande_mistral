@@ -1,4 +1,5 @@
 import streamlit as st
+
 st.set_page_config(page_title="📦 Envoi états de commande", page_icon="📤", layout="wide")
 
 pg_envoi_cmd = st.Page("pages/1_envoi_etats_de_commande.py", title="📦 Envoi états de commande")

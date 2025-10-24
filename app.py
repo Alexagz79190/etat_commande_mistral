@@ -1,4 +1,9 @@
 import streamlit as st
+st.sidebar.write("Version Streamlit:", st.__version__)
+
+
+
+import streamlit as st
 
 st.set_page_config(page_title="📦 Envoi états de commande", page_icon="📤", layout="wide")
 

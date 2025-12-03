@@ -57,7 +57,8 @@ ETATS = [
     "En cours de reapprovisionnement",
     "En cours de traitement",
     "En cours de livraison",
-    "En traitement"
+    "En traitement",
+    "En cours de livraison"
 ]
 
 # =============================

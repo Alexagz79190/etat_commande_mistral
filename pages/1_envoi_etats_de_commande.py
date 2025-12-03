@@ -51,14 +51,12 @@ SFTP_CFG = get_sftp_config()
 # États possibles
 # =============================
 ETATS = [
-    "Delete",
-    "En attente de paiement",
     "En cours de preparation",
     "En cours de reapprovisionnement",
-    "En cours de traitement",
     "En cours de livraison",
     "En traitement",
-    "En cours de livraison"
+    "En attente de paiement",
+    "Delete"
 ]
 
 # =============================

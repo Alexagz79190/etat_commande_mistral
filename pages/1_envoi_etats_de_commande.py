@@ -73,12 +73,7 @@ TRANSPORTEURS = [
 # Cron
 # =============================
 CRON_URL = (
-    "https://admin-refonte.agrizone.net/?crudAction=launch&"
-    "crudControllerFqcn=Boss%5CSchedulerBundle%5CController%5CSchedulerCrudController&"
-    "entityFqcn=App%5CEntity%5CScheduler%5CScheduler&"
-    "logical_filter=%7B%22andx%22:%7B%221%22:%7B%22property%22:%22name%22,%22condition%22:%22contient%22,"
-    "%22widget%22:%22recup%22%7D%7D%7D&"
-    "message=App%5CMessageHandler%5CScheduler%5CMistralRecupCommandeHandler"
+    "https://admin-refonte.agrizone.net/scheduler/01K7KZ155HKQ9MT0R6PE779MB5/launch?page=1"
 )
 
 

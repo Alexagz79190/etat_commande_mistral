@@ -150,10 +150,7 @@ st.markdown("---")
 if st.session_state.facture_ok:
     st.markdown("### 🕐 Étape suivante")
     CRON_FACTURE_URL = (
-        "https://admin-refonte.agrizone.net/?crudAction=launch&"
-        "crudControllerFqcn=Boss%5CSchedulerBundle%5CController%5CSchedulerCrudController&"
-        "entityFqcn=App%5CEntity%5CScheduler%5CScheduler&"
-        "message=App%5CMessageHandler%5CScheduler%5CMistralRecupFactureHandler"
+        "https://admin-refonte.agrizone.net/scheduler/01JBH27SNPNSCR5T774X9XQYR9/launch?page=1"
     )
 
     st.link_button(
